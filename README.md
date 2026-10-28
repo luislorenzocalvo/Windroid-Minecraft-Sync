@@ -14,6 +14,22 @@
 
 **A OneDrive account (and the Windows desktop client) is strictly required** for the automation processes to work.
 
+## 📂 Folder Structure & Paths
+
+Currently, the project operates using a specific folder tree. You can customize these base locations inside the `.ps1` script. 
+*Note: The script automatically creates all necessary subfolders, except for the base `MinecraftSync/YourWorldName` folder in your OneDrive, which you must create manually beforehand.*
+
+**💻 Local Windows Structure:**
+*   `[Your_Choice_Path]/YourWorldName/initial/`: This is where local backups are stored. The script generates folders here named with the exact timestamp of their creation, keeping them neatly sorted by date.
+
+**☁️ OneDrive Structure:**
+*   `[OneDrive_Root]/MinecraftSync/YourWorldName/`: The main cloud directory containing the following subfolders:
+    *   `backups/`: A space where you can manually place extra backups just in case.
+    *   `Concurrent/`: Currently inactive. The future goal is to store the "active" version here, or a JSON file tracking the most up-to-date world, useful if multiple people need to download the latest version.
+    *   `releases/`: Where Windows automatically uploads its `.mcworld` exports (named by date).
+    *   `incoming/`: Where you must manually upload your Android `.mcworld` exports.
+    *   `incoming/processed/`: When Windows successfully imports a world from the `incoming` folder, it moves the file here to prevent re-importing the same file twice.
+
 ## ✨ Features (Current Phase - Windows)
 
 *   **☁️ OneDrive Integration:** Syncs directly using the OneDrive desktop client. Can upload from a local backup folder or straight from the active Minecraft world directory.
