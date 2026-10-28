@@ -57,7 +57,7 @@ You can modify the parameters with VS Code or any other text editor by opening t
 * `-ConfirmCleanup $true` / `$false`: to require confirmation or to automatically delete any local backup past the `KeepLocalBackups` limit.
 * You can also import a specific file by running:
   ```powershell
-  .\MinecraftSync_Bidireccional.ps1 -Action Import -ImportFile "C:\Users\USER\OneDrive\MinecraftSync\MiMundo\incoming\mi_mundo.mcworld"
+  .\MinecraftSync_Bidireccional.ps1 -Action Import -ImportFile "C:\Users\USER\OneDrive\MinecraftSync\WorldName\incoming\mi_mundo.mcworld"
   ```
 ### 📱 Android (Manual Workaround)
 Due to current Android file system restrictions, syncing on mobile requires a manual process for now.
