@@ -89,7 +89,7 @@ Thanks to **Shizuku** and **Termux**, exporting your Minecraft worlds on Android
      *(If configured correctly, this will list your OneDrive root directories).*
 
 5. **Run the Export Script:**
-   Download the `exportar_minecraft.sh` script attached in the latest Release, move it to your home directory, and execute:
+   Copy the `exportar_minecraft.txt` script attached in the latest Release, move it to your home directory, and execute:
    ```bash
    ~/exportar_minecraft.sh
    ```
