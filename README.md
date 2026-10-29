@@ -8,11 +8,11 @@
 
 **Windroid Minecraft Sync** is an automation tool designed to import, export, and bidirectionally sync Minecraft worlds between Windows and Android devices.
 
-> **⚠️ Current Status:** This project is in its early stages of development. Currently, the core functionality operates via a standalone PowerShell script (`.ps1`) for only Windows environments.
+> **⚠️ Current Status:** This project is in its early stages of development. Currently, the core functionality operates via a standalone PowerShell script (`.ps1`) for only Windows environments. On Android you need some apps and the use of a terminal.
 
 ## ⚠️ Important Requirement
 
-**A OneDrive account (and the Windows desktop client) is strictly required** for the automation processes to work.
+**A OneDrive account (and the Windows desktop client) is strictly required** for the automation processes to work. (I will try to use a open source alternative in the future)
 
 ## How to Use
 
@@ -46,20 +46,63 @@ You can modify the parameters with VS Code or any other text editor by opening t
   ```powershell
   .\MinecraftSync_Bidireccional.ps1 -Action Import -ImportFile "C:\Users\USER\OneDrive\MinecraftSync\WorldName\incoming\mi_mundo.mcworld"
   ```
-### 📱 Android (Manual Workaround)
-Due to current Android file system restrictions, syncing on mobile requires a manual process for now.
+### 📱 Android (Automated Export & Manual Import)
 
-**📥 To Import a world to Android:**
-1. Manually download the `.mcworld` file from your OneDrive app.
-2. Tap to open the downloaded file (just like any regular file). This will automatically launch Minecraft and start importing the world.
+Thanks to **Shizuku** and **Termux**, exporting your Minecraft worlds on Android is now automated!
 
-**📤 To Export a world from Android:**
-1. Use a file manager app to navigate to your Minecraft worlds folder (usually located at `Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftWorlds`).
-2. Copy your specific world folder and paste it into a different directory *outside* of `Android/data` (for example, your Documents or Downloads folder).
-3. Open this newly copied folder and **select all the files inside it**.
-4. Compress the selected files into a `.zip` archive.
-5. Rename the file extension from `.zip` to `.mcworld`.
-6. Upload this newly created `.mcworld` file to your OneDrive so the Windows script can detect it.
+#### 📤 Automated Export Setup
+
+1. **Install Shizuku:**
+   Download and install Shizuku from the [official Shizuku website](https://shizuku.rikka.app/). Follow the on-screen instructions to start the service (using Wireless Debugging, ADB, or Root).
+
+2. **Install Termux & Link with Shizuku:**
+   Download [Termux(https://github.com/termux)] and configure it to work alongside Shizuku following the official documentation.
+
+3. **Install Dependencies & Configure Rclone:**
+   Open Termux and run the following commands:
+   * Update your packages:
+     ```bash
+     pkg update
+     ```
+   * Install `zip` (for compressing worlds) and `rclone` (for syncing with OneDrive):
+     ```bash
+     pkg install zip rclone
+     ```
+   * Start the OneDrive configuration setup:
+     ```bash
+     rclone config
+     ```
+
+4. **Set Up the OneDrive Remote in Rclone:**
+   * Type `n` to create a **New remote**.
+   * Name it: `onedrive`
+   * Select **OneDrive** as the storage type.
+   * Press `Enter` on `client_id` and `client_secret` to leave them blank.
+   * Choose **OneDrive Personal**.
+   * Select `Type in driveID (advanced)` when prompted.
+   * Select to continue via broser, when the browser opens, log in with your Microsoft account to authorize access.
+   * Press `Enter` to accept the default options for all remaining prompts.
+   * Test your connection by running:
+     ```bash
+     rclone lsd onedrive:
+     ```
+     *(If configured correctly, this will list your OneDrive root directories).*
+
+5. **Run the Export Script:**
+   Download the `exportar_minecraft.sh` script attached in the latest Release, move it to your home directory, and execute:
+   ```bash
+   ~/exportar_minecraft.sh
+   ```
+   *If everything is set up correctly, the world backup will be generated and automatically uploaded to your OneDrive `incoming` folder!*
+
+---
+
+#### 📥 Manual Import (Android)
+Due to Android's current file system restrictions, importing worlds to your mobile device remains a manual step:
+
+1. Download the `.mcworld` file from your OneDrive app.
+2. Tap to open the downloaded file in your file manager.
+3. Minecraft will launch automatically and begin importing the world into your game.
 
 
 ## 📂 Folder Structure & Paths
@@ -78,8 +121,9 @@ Currently, the project operates using a specific folder tree. You can customize 
     *   `incoming/`: Where you must manually upload your Android `.mcworld` exports.
     *   `incoming/processed/`: When Windows successfully imports a world from the `incoming` folder, it moves the file here to prevent re-importing the same file twice.
 
-## ✨ Features (Current Phase - Windows)
+## ✨ Features (Current Phase)
 
+### 💻 Windows
 *   **☁️ OneDrive Integration:** Syncs directly using the OneDrive desktop client. Can upload from a local backup folder or straight from the active Minecraft world directory.
 *   **💾 Local Backups & Retention:** Creates local copies of selected worlds. You can configure the maximum number of retained copies (default is 3, can be disabled entirely).
 *   **🧹 Automated Cleanup:** Deletes older backups when the limit is exceeded. By default, it asks for confirmation, but it can be set to silent automatic deletion.
@@ -89,8 +133,11 @@ Currently, the project operates using a specific folder tree. You can customize 
 *   **📄 JSON Metadata:** Generates a `.json` file alongside uploads containing the timestamp and detailed upload data.
 *   **🦺 Failsafe Backups (WIP):** Automatically generates a temporary safety copy during uploads and imports to prevent data loss. *(Note: This feature is currently under review to optimize OneDrive storage limits).*
 
-## 📱 Android Support (To Be Implemented)
+### 📱 Android
+* **🤖 Automated Export (Termux + Shizuku):** Uses `rish` (Shizuku) and `rclone` to automatically copy, compress into `.mcworld`, and upload your selected world directly to OneDrive's `incoming` folder.
+* **🔓 Scoped Storage Bypass:** Accesses restricted `Android/data` directories seamlessly without requiring full device root.
+* **🛡️ Integrity Verification:** Validates essential Bedrock structure (`level.dat` and `db`) and tests ZIP integrity before executing the cloud upload.
+* **📥 Manual Import (OS Limitation):** Easily import worlds by tapping the downloaded `.mcworld` file to automatically launch Minecraft and trigger its native importer.
 
-> **DISCLAIMER:** Due to Android 11+ security policies (Scoped Storage), access to the `Android/data` folder is heavily restricted.
-*   **Current State:** Android synchronization must be done **manually** using third-party file explorer apps that can bypass or grant access to the `Android/data` directories.
-*   **Future Goal:** Ongoing research to bypass or adapt to these restrictions in order to fully automate the Android side of the sync process.
+## 📱 Android Support (To Be Implemented)
+*   **Future Goal:** Ongoing research to bypass or adapt to restrictions in order to fully automate the Android side of the sync process.
