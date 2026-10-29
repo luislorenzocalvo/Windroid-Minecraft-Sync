@@ -1,0 +1,75 @@
+cat > ~/exportar_minecraft.sh <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+SOURCE="/storage/emulated/0/Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftWorlds/YOUR_WORLD_FOLDER"
+BASE="$HOME/storage/downloads/MinecraftSync"
+WORK="$HOME/MinecraftSync/tmp"
+DEST="onedrive:MinecraftSync/YOUR_WORLD_NAME/incoming"
+
+# Unique name for each export
+STAMP=$(date '+%Y-%m-%d_%H-%M-%S')
+FILENAME="Minecraft_Android_${STAMP}.mcworld"
+OUT="$BASE/$FILENAME"
+
+mkdir -p "$BASE" "$WORK"
+
+echo "== Minecraft Export =="
+
+# Check required tools
+command -v zip >/dev/null || {
+    echo "zip is missing. Install it with: pkg install zip"
+    exit 1
+}
+command -v rclone >/dev/null || {
+    echo "rclone not found."
+    exit 1
+}
+
+# Verify that the world exists
+sh "$HOME/bin/rish" -c \
+  "test -f '$SOURCE/level.dat' && test -d '$SOURCE/db'" || {
+    echo "World not found or essential files are missing."
+    exit 1
+}
+
+# Copy world to temporary directory
+echo "1/3 Copying world..."
+rm -rf "$WORK/world"
+mkdir -p "$WORK/world"
+
+STAGE="/storage/emulated/0/Download/MinecraftSync/tmp/world"
+
+# Shizuku copies the world to Downloads, where it has filesystem permission
+sh "$HOME/bin/rish" -c \
+  "mkdir -p '$STAGE' && cp -a '$SOURCE/.' '$STAGE/'"
+
+# Termux copies from Downloads into its private storage space
+cp -a "$HOME/storage/downloads/MinecraftSync/tmp/world/." "$WORK/world/"
+
+# Verify the local copy
+test -f "$WORK/world/level.dat"
+test -d "$WORK/world/db"
+
+# Package files into .mcworld directly from root directory
+echo "2/3 Creating .mcworld file..."
+rm -f "$OUT"
+(
+    cd "$WORK/world"
+    zip -qr "$OUT" .
+)
+
+# Verify that the ZIP file is readable
+unzip -t "$OUT" >/dev/null
+
+# Upload to OneDrive
+echo "3/3 Uploading to OneDrive..."
+rclone copyto "$OUT" "$DEST/$FILENAME"
+
+echo
+echo "Export completed."
+echo "File: $OUT"
+echo "Destination: $DEST/$FILENAME"
+EOF
+
+chmod +x ~/exportar_minecraft.sh
