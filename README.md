@@ -56,7 +56,7 @@ Thanks to **Shizuku** and **Termux**, exporting your Minecraft worlds on Android
    Download and install Shizuku from the [official Shizuku website](https://shizuku.rikka.app/). Follow the on-screen instructions to start the service (using Wireless Debugging, ADB, or Root).
 
 2. **Install Termux & Link with Shizuku:**
-   Download [Termux]((https://github.com/termux/termux-app)) and configure it to work alongside Shizuku following the official documentation.
+   Download [Termux](https://github.com/termux/termux-app) and configure it to work alongside Shizuku following the official documentation.
 
 3. **Install Dependencies & Configure Rclone:**
    Open Termux and run the following commands:
