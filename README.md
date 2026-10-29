@@ -24,13 +24,17 @@ Since the project is in early development, you only need to download and run the
 2. Open PowerShell in the folder where you downloaded it.
 3. If this is your first time running scripts on your machine, you might need to grant execution permissions. Run this command as Administrator:
    ```powershell
-   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
    ```
 4. Depending on what you want to do, use one of these:
    * `.\MinecraftSync_Bidireccional.ps1 -Action Backup`
    * `.\MinecraftSync_Bidireccional.ps1 -Action Publish`
    * `.\MinecraftSync_Bidireccional.ps1 -Action Import`
 
+If it gave you an error, put this:
+   ```powershell
+   Unblock-File -Path ".\MinecraftSync_Bidireccional.ps1"
+   ```
 You can modify the parameters with VS Code or any other text editor by opening the `.ps1` file and changing the `param` block, or use flags directly in the console:
 * `-KeepLocalBackups X`: to change the maximum number of local backups. For example:
   ```powershell
