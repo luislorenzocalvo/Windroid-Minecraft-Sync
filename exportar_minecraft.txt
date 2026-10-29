@@ -5,7 +5,7 @@ set -euo pipefail
 SOURCE="/storage/emulated/0/Android/data/com.mojang.minecraftpe/files/games/com.mojang/minecraftWorlds/YOUR_WORLD_FOLDER"
 BASE="$HOME/storage/downloads/MinecraftSync"
 WORK="$HOME/MinecraftSync/tmp"
-DEST="onedrive:MinecraftSync/YOUR_WORLD_NAME/incoming"
+DEST="onedrive:MinecraftSync/YOUR_WORLD_NAME/incoming" #CHANGE "YOUR_WORLD_NAME" FOR THE NAME OF YOUR WORLD ON ONIDRIVE/MinecraftSync
 
 # Unique name for each export
 STAMP=$(date '+%Y-%m-%d_%H-%M-%S')
