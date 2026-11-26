@@ -3,32 +3,29 @@ param(
     [ValidateSet("Backup", "Publish", "Import")]
     [string]$Action = "Backup",
 
-    # Optional for Import. If omitted, the most recent .mcworld in 'incoming' is used.
+    # Optional for Import. If omitted, the latest .mcworld with a .READY marker in incoming is used.
     [string]$ImportFile,
 
-    # $true by default. Use -CreateLocalBackup $false to skip it.
+    # $true by default. Pass -CreateLocalBackup $false to skip timestamped backups.
     [bool]$CreateLocalBackup = $true,
 
-    # Number of local copies to keep.
+    # Number of timestamped local backups to keep.
     [ValidateRange(1, 100)]
     [int]$KeepLocalBackups = 3,
 
-    # Cleanup confirmation, whether to delete old worlds automatically or not.
+    # Prompt before deleting old timestamped backups.
     [bool]$ConfirmCleanup = $true
-
 )
 
 $ErrorActionPreference = "Stop"
 
 # ---------------------------------------------------------------------------
-# CONFIGURATION: Paths for this installation
+# CONFIGURATION: replace placeholders with your local installation paths
 # ---------------------------------------------------------------------------
-# Replace these placeholders with your actual Windows username and World Folder name
-$WorldPath = 'C:\Users\YOUR_USERNAME\AppData\Local\Packages\Microsoft.MinecraftUWP_8wekyb3d8bbwe\LocalState\games\com.mojang\minecraftWorlds\YOUR_WORLD_FOLDER'
-# In some cases (like mine), the world folder is in 'C:\Users\YOUR_USERNAME\AppData\Roaming\Minecraft Bedrock\Users\A_RANDOM_NUMBER\games\com.mojang\minecraftWorlds\YOUR_WORLD_FOLDER'
-# To see wich one you have, just search in both, first in the LocalState path, and if you don't find it, search in the Roaming path.
-$CloudWorld = 'C:\Users\YOUR_USERNAME\OneDrive\MinecraftSync\YOUR_WORLD_NAME' #You have to create this folder in your OneDrive before running the script. It will be used to store the .mcworld files and the manifest.json file.
-$LocalBackups = Join-Path $env:USERPROFILE 'Downloads\MinecraftSync_Backups' #You can change this to any folder you want, but it is recommended to use a folder that is not synchronized with OneDrive, to avoid conflicts and accidental deletions.
+$WorldPath = 'C:\Users\YourUser\AppData\Roaming\Minecraft Bedrock\Users\YOUR_USER_ID\games\com.mojang\minecraftWorlds\YOUR_WORLD_FOLDER'
+$CloudWorld = 'C:\Users\YourUser\OneDrive\MinecraftSync\YOUR_WORLD_NAME'
+$LocalBackups = Join-Path $env:USERPROFILE 'Documents\MinecraftBackups\YOUR_WORLD_NAME\initial'
+$ImportRecovery = Join-Path (Split-Path -Parent $LocalBackups) 'ImportRecovery'
 $Releases = Join-Path $CloudWorld 'releases'
 $Incoming = Join-Path $CloudWorld 'incoming'
 
@@ -39,12 +36,12 @@ function Assert-World {
     param([Parameter(Mandatory)][string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        throw "Directory does not exist: $Path"
+        throw "No existe la carpeta: $Path"
     }
 
     if (-not (Test-Path -LiteralPath (Join-Path $Path 'level.dat') -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $Path 'db') -PathType Container)) {
-        throw "The directory does not appear to contain a valid Bedrock world (expected level.dat and db): $Path"
+        throw "La carpeta no parece contener un mundo Bedrock válido (se esperan level.dat y db): $Path"
     }
 }
 
@@ -71,7 +68,7 @@ function Get-WorldFingerprint {
     $Files = Get-RelativeFileList -Path $Path
 
     if ($Files.Count -eq 0) {
-        throw "No files found in: $Path"
+        throw "No se encontraron archivos en: $Path"
     }
 
     $Rows = foreach ($File in $Files) {
@@ -94,23 +91,23 @@ function Assert-WorldsMatch {
         [Parameter(Mandatory)][string]$Destination
     )
 
-    Write-Host "Verifying files and their SHA-256 hashes..."
+    Write-Host "Verificando los archivos y sus hashes SHA-256..."
     $SourceRows = @(Get-WorldFingerprint -Path $Source)
     $DestinationRows = @(Get-WorldFingerprint -Path $Destination)
 
     if ($SourceRows.Count -ne $DestinationRows.Count) {
-        throw "Verification failed: the number of files does not match."
+        throw "La verificación ha fallado: el número de archivos no coincide."
     }
 
     for ($i = 0; $i -lt $SourceRows.Count; $i++) {
         if ($SourceRows[$i].Path -cne $DestinationRows[$i].Path -or
             $SourceRows[$i].Length -ne $DestinationRows[$i].Length -or
             $SourceRows[$i].SHA256 -cne $DestinationRows[$i].SHA256) {
-            throw "Verification failed on file: $($SourceRows[$i].Path)"
+            throw "La verificación ha fallado en el archivo: $($SourceRows[$i].Path)"
         }
     }
 
-    Write-Host "Verification successful: $($SourceRows.Count) files checked." -ForegroundColor Green
+    Write-Host "Verificación correcta: $($SourceRows.Count) archivos comprobados." -ForegroundColor Green
 }
 
 function Copy-World {
@@ -121,23 +118,23 @@ function Copy-World {
 
     Assert-World -Path $Source
 
-    # Do not reuse a destination folder: it might contain old files.
+    # Never reuse an existing destination folder; it could contain stale files.
     if (Test-Path -LiteralPath $Destination) {
-        throw "Destination folder already exists; it will not be overwritten: $Destination"
+        throw "La carpeta de destino ya existe; no se sobrescribirá: $Destination"
     }
 
     $Parent = Split-Path -Parent $Destination
     New-Item -ItemType Directory -Path $Parent -Force | Out-Null
     New-Item -ItemType Directory -Path $Destination | Out-Null
 
-    # Robocopy: /E subdirectories; /COPY:DAT basic metadata;
-    # /DCOPY:DAT directory metadata; /XJ avoids following junctions.
+    # Robocopy flags: /E subdirectories; /COPY:DAT basic file metadata;
+    # /DCOPY:DAT directory metadata; /XJ skip junction points.
     & robocopy $Source $Destination /E /COPY:DAT /DCOPY:DAT /R:2 /W:2 /XJ /NFL /NDL /NP
     $Code = $LASTEXITCODE
 
-    # In Robocopy, codes 0-7 do not represent a fatal error. 
+    # In Robocopy, exit codes 0-7 indicate non-fatal results.
     if ($Code -ge 8) {
-        throw "Robocopy failed with code $Code."
+        throw "Robocopy ha fallado con el código $Code."
     }
 
     Assert-World -Path $Destination
@@ -155,7 +152,7 @@ function Remove-OldLocalBackups {
         return
     }
 
-    # Only consider folders that look like a world backup and have a date name format.
+    # Only consider timestamped folders that contain a valid Bedrock world.
     $Folders = @(
         Get-ChildItem -LiteralPath $Path -Directory |
         Where-Object {
@@ -173,28 +170,28 @@ function Remove-OldLocalBackups {
     $OldFolders = @($Folders | Select-Object -Skip $Keep)
 
     if ($OldFolders.Count -eq 0) {
-        Write-Host "No old backups to delete."
+        Write-Host "No hay copias antiguas que eliminar."
         return
     }
 
-    Write-Host "Backups to keep: $Keep"
-    Write-Host "Backups exceeding the limit: $($OldFolders.Count)"
+    Write-Host "Copias que se conservarán: $Keep"
+    Write-Host "Copias que superan el límite: $($OldFolders.Count)"
 
     if ($ConfirmCleanup) {
-        $Answer = Read-Host "Delete the $($OldFolders.Count) old backups? Type YES to delete all; any other response will keep them"
+        $Answer = Read-Host "¿Eliminar las $($OldFolders.Count) copias antiguas? Escribe SI para borrar todas; cualquier otra respuesta las conservará"
 
-        if ($Answer -cne 'YES') {
-            Write-Host "Cleanup cancelled. All old backups have been kept."
+        if ($Answer -cne 'SI') {
+            Write-Host "Limpieza cancelada. Se conservan todas las copias antiguas."
             return
         }
     }
 
     foreach ($Folder in $OldFolders) {
         Remove-Item -LiteralPath $Folder.FullName -Recurse -Force
-        Write-Host "Backup deleted: $($Folder.Name)" -ForegroundColor Yellow
+        Write-Host "Copia eliminada: $($Folder.Name)" -ForegroundColor Yellow
     }
 
-    Write-Host "Cleanup completed."
+    Write-Host "Limpieza completada."
 }
 
 function Find-WorldRoot {
@@ -214,10 +211,10 @@ function Find-WorldRoot {
     )
 
     if ($Candidates.Count -eq 0) {
-        throw "The archive does not contain a recognizable Bedrock world (level.dat and db not found)."
+        throw "El archivo no contiene un mundo Bedrock reconocible (no se encuentran level.dat y db)."
     }
     if ($Candidates.Count -gt 1) {
-        throw "The archive contains more than one folder that looks like a world. It will not be imported to avoid choosing the wrong one."
+        throw "El archivo contiene más de una carpeta que parece un mundo. No se importará para evitar elegir la incorrecta."
     }
     return $Candidates[0].FullName
 }
@@ -231,7 +228,7 @@ function New-VerifiedMcworld {
 
     Assert-World -Path $SourceWorld
     if (Test-Path -LiteralPath $DestinationFile) {
-        throw "Destination file already exists; it will not be overwritten: $DestinationFile"
+        throw "El archivo de destino ya existe; no se sobrescribirá: $DestinationFile"
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -245,12 +242,12 @@ function New-VerifiedMcworld {
             $false
         )
 
-        # The temporary .zip is renamed to .mcworld after verification.
-        Expand-Archive -LiteralPath $ZipPath -DestinationPath $VerifyPath -ErrorAction Stop
+        # Extract and verify every file hash before renaming the temporary .zip to .mcworld.
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $VerifyPath)
         $VerifiedRoot = Find-WorldRoot -Path $VerifyPath
         Assert-WorldsMatch -Source $SourceWorld -Destination $VerifiedRoot
         Move-Item -LiteralPath $ZipPath -Destination $DestinationFile
-        Write-Host ".mcworld file created and verified: $DestinationFile" -ForegroundColor Green
+        Write-Host "Archivo .mcworld creado y verificado: $DestinationFile" -ForegroundColor Green
     }
     finally {
         if (Test-Path -LiteralPath $ZipPath) {
@@ -262,6 +259,69 @@ function New-VerifiedMcworld {
     }
 }
 
+function Test-McworldPackageIntegrity {
+    param(
+        [Parameter(Mandatory)][string]$ArchivePath,
+        [string]$ManifestPath,
+        [string]$ReadyPath
+    )
+
+    $ExpectedSha256 = $null
+    $ExpectedSize = $null
+
+    if ($ReadyPath -and (Test-Path -LiteralPath $ReadyPath -PathType Leaf)) {
+        try {
+            $ReadyData = Get-Content -LiteralPath $ReadyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($ReadyData.status -and ($ReadyData.status -ne 'READY')) {
+                throw "El marcador READY no tiene estado válido: $($ReadyData.status)"
+            }
+            if ($ReadyData.sha256) {
+                $ExpectedSha256 = [string]$ReadyData.sha256
+            }
+        }
+        catch {
+            throw "No se pudo leer o validar el archivo READY '$ReadyPath': $($_.Exception.Message)"
+        }
+    }
+
+    if ($ManifestPath -and (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+        try {
+            $ManifestData = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($ManifestData.snapshot) {
+                if ($ManifestData.snapshot.sha256) {
+                    $ManifestSha = [string]$ManifestData.snapshot.sha256
+                    if ($ExpectedSha256 -and ($ExpectedSha256 -ine $ManifestSha)) {
+                        throw "El SHA-256 de READY y manifest.json no coinciden."
+                    }
+                    $ExpectedSha256 = $ManifestSha
+                }
+                if ($null -ne $ManifestData.snapshot.size_bytes) {
+                    $ExpectedSize = [int64]$ManifestData.snapshot.size_bytes
+                }
+            }
+        }
+        catch {
+            throw "No se pudo leer o validar el manifest '$ManifestPath': $($_.Exception.Message)"
+        }
+    }
+
+    if ($null -ne $ExpectedSize) {
+        $ActualSize = (Get-Item -LiteralPath $ArchivePath).Length
+        if ($ActualSize -ne $ExpectedSize) {
+            throw "El tamaño del .mcworld ($ActualSize bytes) no coincide con el manifest ($ExpectedSize bytes)."
+        }
+    }
+
+    if ($ExpectedSha256) {
+        Write-Host "Verificando SHA-256 del paquete .mcworld..."
+        $ActualSha256 = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash
+        if ($ActualSha256 -ine $ExpectedSha256) {
+            throw "El SHA-256 del paquete no coincide. Esperado: $ExpectedSha256 | Actual: $ActualSha256"
+        }
+        Write-Host "SHA-256 del paquete verificado correctamente." -ForegroundColor Green
+    }
+}
+
 function Get-McworldSource {
     param([string]$RequestedFile, [Parameter(Mandatory)][string]$IncomingPath)
 
@@ -269,20 +329,69 @@ function Get-McworldSource {
         $Resolved = (Resolve-Path -LiteralPath $RequestedFile -ErrorAction Stop).Path
         if (-not (Test-Path -LiteralPath $Resolved -PathType Leaf) -or
             [System.IO.Path]::GetExtension($Resolved) -ine '.mcworld') {
-            throw "ImportFile must point to a valid .mcworld file: $RequestedFile"
+            throw "ImportFile debe apuntar a un archivo .mcworld válido: $RequestedFile"
         }
-        return $Resolved
+        $SidecarManifest = "$Resolved.manifest.json"
+        $SidecarReady = "$Resolved.READY"
+        $HasManifest = Test-Path -LiteralPath $SidecarManifest -PathType Leaf
+        $HasReady = Test-Path -LiteralPath $SidecarReady -PathType Leaf
+        Test-McworldPackageIntegrity -ArchivePath $Resolved `
+            -ManifestPath ($(if ($HasManifest) { $SidecarManifest } else { $null })) `
+            -ReadyPath ($(if ($HasReady) { $SidecarReady } else { $null }))
+
+        return [PSCustomObject]@{
+            ArchivePath    = $Resolved
+            ManifestPath   = $(if ($HasManifest) { $SidecarManifest } else { $null })
+            ReadyPath      = $(if ($HasReady) { $SidecarReady } else { $null })
+            IsFromIncoming = $false
+        }
     }
 
     if (-not (Test-Path -LiteralPath $IncomingPath -PathType Container)) {
         New-Item -ItemType Directory -Path $IncomingPath -Force | Out-Null
     }
-    $Files = @(Get-ChildItem -LiteralPath $IncomingPath -File -Filter '*.mcworld' |
+
+    $AllMcworlds = @(Get-ChildItem -LiteralPath $IncomingPath -File -Filter '*.mcworld' |
         Sort-Object LastWriteTime -Descending)
-    if ($Files.Count -eq 0) {
-        throw "No .mcworld files found in '$IncomingPath'. Copy the Android export there or use -ImportFile with a specific path."
+    if ($AllMcworlds.Count -eq 0) {
+        throw "No hay archivos .mcworld en '$IncomingPath'. Copia ahí la exportación de Android o usa -ImportFile con una ruta concreta."
     }
-    return $Files[0].FullName
+
+    $ReadyPackages = New-Object System.Collections.Generic.List[object]
+    $SkippedWithoutReady = New-Object System.Collections.Generic.List[string]
+
+    foreach ($File in $AllMcworlds) {
+        $CandidateReady = "$($File.FullName).READY"
+        $CandidateManifest = "$($File.FullName).manifest.json"
+        if (Test-Path -LiteralPath $CandidateReady -PathType Leaf) {
+            $ReadyPackages.Add([PSCustomObject]@{
+                ArchivePath    = $File.FullName
+                ManifestPath   = $(if (Test-Path -LiteralPath $CandidateManifest -PathType Leaf) { $CandidateManifest } else { $null })
+                ReadyPath      = $CandidateReady
+                LastWriteTime  = $File.LastWriteTime
+                IsFromIncoming = $true
+            })
+        }
+        else {
+            $SkippedWithoutReady.Add($File.Name)
+        }
+    }
+
+    if ($ReadyPackages.Count -eq 0) {
+        $SkippedList = $SkippedWithoutReady -join ', '
+        throw "Hay archivos .mcworld en '$IncomingPath' ($SkippedList), pero ninguno tiene marcador .READY. Espera a que OneDrive termine de sincronizar o verifica la exportación en Android."
+    }
+
+    if ($SkippedWithoutReady.Count -gt 0) {
+        Write-Warning "Se ignoraron paquetes sin .READY (posible subida/sincronización incompleta): $($SkippedWithoutReady -join ', ')"
+    }
+
+    $Selected = $ReadyPackages[0]
+    Test-McworldPackageIntegrity -ArchivePath $Selected.ArchivePath `
+        -ManifestPath $Selected.ManifestPath `
+        -ReadyPath $Selected.ReadyPath
+
+    return $Selected
 }
 
 function Import-McworldSafely {
@@ -300,35 +409,31 @@ function Import-McworldSafely {
     $ZipPath = Join-Path $StageRoot 'source.zip'
     $PreviousWorld = Join-Path $Parent ('.minecraft_previous_' + $Stamp)
     $OriginalMoved = $false
-    $NewWorldInstalled = $false
 
     if (Test-Path -LiteralPath $StageRoot) {
-        throw "A temporary import folder already exists: $StageRoot"
+        throw "Ya existe una carpeta temporal de importación: $StageRoot"
     }
     New-Item -ItemType Directory -Path $ExtractRoot -Force | Out-Null
     try {
-        # Expand-Archive requires .zip; the .mcworld content is also a ZIP.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
         Copy-Item -LiteralPath $ArchivePath -Destination $ZipPath
-        Expand-Archive -LiteralPath $ZipPath -DestinationPath $ExtractRoot -ErrorAction Stop
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $ExtractRoot)
         $SourceRoot = Find-WorldRoot -Path $ExtractRoot
         Copy-World -Source $SourceRoot -Destination $StageWorld
 
-        # Full validation before touching the current world.
+        # Full validation before touching the active world folder.
         Assert-World -Path $StageWorld
         $null = Get-WorldFingerprint -Path $StageWorld
 
-        # The previous world is already backed up in LocalBackups; it is temporarily renamed
-        # so it can be restored if the installation fails.
+        # Move the current world aside temporarily so it can be restored if installation fails.
         Move-Item -LiteralPath $DestinationWorld -Destination $PreviousWorld
         $OriginalMoved = $true
         try {
             Copy-World -Source $StageWorld -Destination $DestinationWorld
-            $NewWorldInstalled = $true
             Assert-WorldsMatch -Source $StageWorld -Destination $DestinationWorld
         }
         catch {
-            # Since the destination was missing after moving the original, any
-            # folder that appeared here is a partial installation and can be removed.
+            # Since the destination was moved aside, anything at $DestinationWorld is a partial install.
             if ($OriginalMoved -and (Test-Path -LiteralPath $DestinationWorld)) {
                 Remove-Item -LiteralPath $DestinationWorld -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -339,13 +444,12 @@ function Import-McworldSafely {
             throw
         }
 
-        # The previous folder is only deleted after verifying the installation; the dated
-        # backup in LocalBackups remains available for recovery.
+        # Delete the temporary previous folder only after the new world is verified.
         if (Test-Path -LiteralPath $PreviousWorld) {
             Remove-Item -LiteralPath $PreviousWorld -Recurse -Force
             $OriginalMoved = $false
         }
-        Write-Host "Import completed and verified: $DestinationWorld" -ForegroundColor Green
+        Write-Host "Importación completada y verificada: $DestinationWorld" -ForegroundColor Green
     }
     catch {
         if ($OriginalMoved -and (Test-Path -LiteralPath $PreviousWorld) -and
@@ -362,83 +466,120 @@ function Import-McworldSafely {
 }
 
 # ---------------------------------------------------------------------------
-# MAIN OPERATION
+# MAIN EXECUTION
 # ---------------------------------------------------------------------------
 $BackupPath = $null
 $TempBackupPath = $null
+$TempRecoveryPath = $null
 $TempMcworldPath = $null
 $FinalMcworldPath = $null
 $ManifestTemp = $null
 $ManifestPath = $null
+$ReadyTemp = $null
+$ReadyPath = $null
 
 try {
-    Write-Host "Action: $Action"
-    # Import always requires a backup, even if -CreateLocalBackup $false is passed.
-    $MustCreateLocalBackup = $CreateLocalBackup -or ($Action -eq 'Import')
-    Write-Host "Local backup: $MustCreateLocalBackup"
+    Write-Host "Acción: $Action"
+    Write-Host "Backup local: $CreateLocalBackup"
 
     Assert-World -Path $WorldPath
 
-    # Basic check. The process name may vary depending on the version.
+    # Best-effort check; process names may vary across Minecraft Bedrock releases.
     $GameProcesses = @(
         Get-Process -Name 'Minecraft.Windows', 'Minecraft' -ErrorAction SilentlyContinue
     )
     if ($GameProcesses.Count -gt 0) {
-        throw "It looks like Minecraft is still open. Close the game completely before continuing."
+        throw "Parece que Minecraft sigue abierto. Cierra el juego completamente antes de continuar."
     }
 
     $Stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss-fff'
-    if ($MustCreateLocalBackup) {
+    if ($CreateLocalBackup) {
         New-Item -ItemType Directory -Path $LocalBackups -Force | Out-Null
         $TempBackupPath = Join-Path $LocalBackups ('.pending_' + $Stamp)
         $BackupPath = Join-Path $LocalBackups $Stamp
 
-        Write-Host "Creating temporary local backup..."
+        Write-Host "Creando copia local temporal..."
         Copy-World -Source $WorldPath -Destination $TempBackupPath
         Move-Item -LiteralPath $TempBackupPath -Destination $BackupPath
         $TempBackupPath = $null
-        Write-Host "Local backup created and verified: $BackupPath" -ForegroundColor Green
+        Write-Host "Copia local creada y verificada: $BackupPath" -ForegroundColor Green
     }
 
     if ($Action -eq 'Publish') {
         if (-not (Test-Path -LiteralPath $CloudWorld -PathType Container)) {
-            throw "Configured destination folder not found: $CloudWorld"
+            throw "No se encuentra la carpeta de destino configurada: $CloudWorld"
         }
         New-Item -ItemType Directory -Path $Releases -Force | Out-Null
 
-        $VersionName = 'MyWorld_version_' + $Stamp
-        $FinalMcworldPath = Join-Path $Releases ($VersionName + '.mcworld')
-        $TempMcworldPath = Join-Path $Releases ('.pending_' + $VersionName + '.mcworld')
-        $ManifestPath = Join-Path $Releases ($VersionName + '.json')
-        $ManifestTemp = Join-Path $Releases ('.' + $VersionName + '.json.pending')
-        
+        $WorldDisplayName = Split-Path -Leaf $CloudWorld
+        $VersionName = "${WorldDisplayName}_version_${Stamp}"
+        $McworldLeaf = $VersionName + '.mcworld'
+        $FinalMcworldPath = Join-Path $Releases $McworldLeaf
+        $TempMcworldPath = Join-Path $Releases ('.pending_' + $McworldLeaf)
+        $ManifestLeaf = $McworldLeaf + '.manifest.json'
+        $ManifestPath = Join-Path $Releases $ManifestLeaf
+        $ManifestTemp = Join-Path $Releases ('.pending_' + $ManifestLeaf)
+        $ReadyLeaf = $McworldLeaf + '.READY'
+        $ReadyPath = Join-Path $Releases $ReadyLeaf
+        $ReadyTemp = Join-Path $Releases ('.pending_' + $ReadyLeaf)
+
         if ((Test-Path -LiteralPath $FinalMcworldPath) -or
             (Test-Path -LiteralPath $TempMcworldPath) -or
             (Test-Path -LiteralPath $ManifestPath) -or
-            (Test-Path -LiteralPath $ManifestTemp)) {
-            throw "A path for this operation already exists. It will not be overwritten: $VersionName"
+            (Test-Path -LiteralPath $ManifestTemp) -or
+            (Test-Path -LiteralPath $ReadyPath) -or
+            (Test-Path -LiteralPath $ReadyTemp)) {
+            throw "Ya existe una ruta de esta operación. No se sobrescribirá: $VersionName"
         }
 
-        if ($MustCreateLocalBackup) { $PublishSource = $BackupPath } else { $PublishSource = $WorldPath }
+        if ($CreateLocalBackup) { $PublishSource = $BackupPath } else { $PublishSource = $WorldPath }
         try {
-            Write-Host "Creating verified .mcworld in OneDrive..."
+            Write-Host "Creando .mcworld verificado en OneDrive..."
             New-VerifiedMcworld -SourceWorld $PublishSource -DestinationFile $TempMcworldPath -WorkRoot $env:TEMP
+
+            $FileSize = (Get-Item -LiteralPath $TempMcworldPath).Length
+            $FileSha256 = (Get-FileHash -LiteralPath $TempMcworldPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $CreatedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+
             $Manifest = [ordered]@{
-                version      = $VersionName
-                created      = (Get-Date).ToUniversalTime().ToString('o')
-                source       = 'windows'
-                world_folder = 'MyWorld'
-                archive      = (Split-Path -Leaf $FinalMcworldPath)
-                verified     = $true
-                note         = 'Locally verified .mcworld file; OneDrive synchronization must be confirmed separately.'
+                schema_version = 1
+                operation      = 'windows_publish'
+                created_at     = $CreatedAt
+                platform       = 'windows'
+                world          = [ordered]@{
+                    name        = $WorldDisplayName
+                    folder_name = (Split-Path -Leaf $WorldPath)
+                }
+                snapshot       = [ordered]@{
+                    filename   = $McworldLeaf
+                    size_bytes = $FileSize
+                    sha256     = $FileSha256
+                    format     = 'mcworld'
+                }
             }
-            $Manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManifestTemp -Encoding UTF8
+            $Manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $ManifestTemp -Encoding UTF8
+
+            $ReadyPayload = [ordered]@{
+                status         = 'READY'
+                schema_version = 1
+                filename       = $McworldLeaf
+                sha256         = $FileSha256
+                manifest       = $ManifestLeaf
+                created_at     = $CreatedAt
+            }
+            $ReadyPayload | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ReadyTemp -Encoding UTF8
+
             Move-Item -LiteralPath $TempMcworldPath -Destination $FinalMcworldPath
             $TempMcworldPath = $null
             Move-Item -LiteralPath $ManifestTemp -Destination $ManifestPath
             $ManifestTemp = $null
-            Write-Host "Release created: $FinalMcworldPath" -ForegroundColor Green
-            Write-Warning "This confirms the file in the local OneDrive folder, not that the cloud upload has finished."
+            Move-Item -LiteralPath $ReadyTemp -Destination $ReadyPath
+            $ReadyTemp = $null
+
+            Write-Host "Publicación creada: $FinalMcworldPath" -ForegroundColor Green
+            Write-Host "Manifest: $ManifestPath"
+            Write-Host "READY: $ReadyPath"
+            Write-Warning "Esto confirma los archivos en la carpeta local de OneDrive, no que la subida a la nube haya terminado."
         }
         catch {
             if ($TempMcworldPath -and (Test-Path -LiteralPath $TempMcworldPath)) {
@@ -447,54 +588,83 @@ try {
             if ($ManifestTemp -and (Test-Path -LiteralPath $ManifestTemp)) {
                 Remove-Item -LiteralPath $ManifestTemp -Force -ErrorAction SilentlyContinue
             }
+            if ($ReadyTemp -and (Test-Path -LiteralPath $ReadyTemp)) {
+                Remove-Item -LiteralPath $ReadyTemp -Force -ErrorAction SilentlyContinue
+            }
             throw
         }
     }
     elseif ($Action -eq 'Import') {
         if (-not (Test-Path -LiteralPath $CloudWorld -PathType Container)) {
-            throw "Configured OneDrive folder not found: $CloudWorld"
+            throw "No se encuentra la carpeta de OneDrive configurada: $CloudWorld"
         }
-        $SourceArchive = Get-McworldSource -RequestedFile $ImportFile -IncomingPath $Incoming
-        Write-Host "File to import: $SourceArchive"
-        Write-Host "Backup is created. Validating the file before replacing the world..."
+        $SourcePkg = Get-McworldSource -RequestedFile $ImportFile -IncomingPath $Incoming
+        $SourceArchive = $SourcePkg.ArchivePath
+        Write-Host "Archivo que se va a importar: $SourceArchive"
+
+        # Dedicated ImportRecovery: always replaced atomically before modifying the active world.
+        $RecoveryParent = Split-Path -Parent $ImportRecovery
+        New-Item -ItemType Directory -Path $RecoveryParent -Force | Out-Null
+        $TempRecoveryPath = Join-Path $RecoveryParent ('.pending_ImportRecovery_' + $Stamp)
+        Write-Host "Creando/actualizando ImportRecovery..."
+        Copy-World -Source $WorldPath -Destination $TempRecoveryPath
+        if (Test-Path -LiteralPath $ImportRecovery) {
+            Remove-Item -LiteralPath $ImportRecovery -Recurse -Force
+        }
+        Move-Item -LiteralPath $TempRecoveryPath -Destination $ImportRecovery
+        $TempRecoveryPath = $null
+        Write-Host "ImportRecovery lista en: $ImportRecovery" -ForegroundColor Green
+
+        Write-Host "Validando e importando el mundo..."
         Import-McworldSafely -ArchivePath $SourceArchive -DestinationWorld $WorldPath -WorkRoot $env:TEMP -Stamp $Stamp
 
-        # After a successful import, archive the input .mcworld to avoid
-        # importing it again accidentally on the next run.
-        if ([string]::IsNullOrWhiteSpace($ImportFile) -and
-            (Test-Path -LiteralPath $SourceArchive) -and
-            ((Split-Path -Parent $SourceArchive) -eq (Get-Item -LiteralPath $Incoming).FullName)) {
+        # After a successful import from incoming, archive .mcworld, manifest, and READY together.
+        if ($SourcePkg.IsFromIncoming -and (Test-Path -LiteralPath $SourceArchive)) {
             $Processed = Join-Path $Incoming 'processed'
             New-Item -ItemType Directory -Path $Processed -Force | Out-Null
-            $ProcessedName = Join-Path $Processed (([System.IO.Path]::GetFileNameWithoutExtension($SourceArchive)) + '_' + $Stamp + '.mcworld')
+            $BaseArchiveName = [System.IO.Path]::GetFileNameWithoutExtension($SourceArchive) + '_' + $Stamp + '.mcworld'
+            $ProcessedMcworld = Join-Path $Processed $BaseArchiveName
             try {
-                Move-Item -LiteralPath $SourceArchive -Destination $ProcessedName -ErrorAction Stop
-                Write-Host "Export archived at: $ProcessedName"
+                Move-Item -LiteralPath $SourceArchive -Destination $ProcessedMcworld -ErrorAction Stop
+                if ($SourcePkg.ManifestPath -and (Test-Path -LiteralPath $SourcePkg.ManifestPath)) {
+                    Move-Item -LiteralPath $SourcePkg.ManifestPath -Destination ($ProcessedMcworld + '.manifest.json') -ErrorAction Stop
+                }
+                if ($SourcePkg.ReadyPath -and (Test-Path -LiteralPath $SourcePkg.ReadyPath)) {
+                    Move-Item -LiteralPath $SourcePkg.ReadyPath -Destination ($ProcessedMcworld + '.READY') -ErrorAction Stop
+                }
+                Write-Host "Exportación archivada en: $ProcessedMcworld"
             }
             catch {
-                Write-Warning "The world was imported successfully, but the .mcworld could not be moved to processed. Avoid re-importing that file: $($_.Exception.Message)"
+                Write-Warning "El mundo se importó correctamente, pero no se pudieron mover todos los archivos a processed: $($_.Exception.Message)"
             }
         }
     }
 
-    if ($MustCreateLocalBackup) {
+    if ($CreateLocalBackup) {
         Remove-OldLocalBackups -Path $LocalBackups -Keep $KeepLocalBackups -ConfirmCleanup $ConfirmCleanup
     }
 
-    Write-Host "Operation completed." -ForegroundColor Green
+    Write-Host "Operación terminada." -ForegroundColor Green
 }
 catch {
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
     if ($TempBackupPath -and (Test-Path -LiteralPath $TempBackupPath)) {
         Remove-Item -LiteralPath $TempBackupPath -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Host "The incomplete temporary local backup has been removed."
+        Write-Host "Se ha retirado la copia local temporal incompleta."
+    }
+    if ($TempRecoveryPath -and (Test-Path -LiteralPath $TempRecoveryPath)) {
+        Remove-Item -LiteralPath $TempRecoveryPath -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "Se ha retirado la copia ImportRecovery temporal incompleta."
     }
     if ($TempMcworldPath -and (Test-Path -LiteralPath $TempMcworldPath)) {
         Remove-Item -LiteralPath $TempMcworldPath -Force -ErrorAction SilentlyContinue
-        Write-Host "The incomplete temporary .mcworld file has been removed."
+        Write-Host "Se ha retirado el archivo .mcworld temporal incompleto."
     }
     if ($ManifestTemp -and (Test-Path -LiteralPath $ManifestTemp)) {
         Remove-Item -LiteralPath $ManifestTemp -Force -ErrorAction SilentlyContinue
+    }
+    if ($ReadyTemp -and (Test-Path -LiteralPath $ReadyTemp)) {
+        Remove-Item -LiteralPath $ReadyTemp -Force -ErrorAction SilentlyContinue
     }
     exit 1
 }
